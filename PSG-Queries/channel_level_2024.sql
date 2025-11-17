@@ -23,7 +23,7 @@ final AS (
         lly.hierarchy_code,
         p.brand,
         p.sku,
-        '2025' as fiscal_year,
+        '2024' as fiscal_year,
         lly.channel,
       SUM(COALESCE(lly.warranty_units, 0)) AS warranty_units,
         SUM(COALESCE(lly.warranty_dollar, 0)) AS warranty_dollar,
