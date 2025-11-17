@@ -23,6 +23,7 @@ final AS (
         lly.hierarchy_code,
         p.brand,
         p.sku,
+        '2025' as fiscal_year,
         lly.channel,
         lly.sub_channel,
         SUM(COALESCE(lly.written_sales_units, 0)) AS sales_units,
@@ -48,7 +49,7 @@ final AS (
     FROM item_smart.lly_master lly
     JOIN pm p
         ON p.hierarchy_code = lly.hierarchy_code
-    WHERE lly.sub_channel NOT IN (
+    WHERE lly.sub_channel IN (
             'Ecom_warehouse',
             'Indirect_warehouse',
             'Store_warehouse'
