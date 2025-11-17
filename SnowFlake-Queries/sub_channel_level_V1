@@ -1,0 +1,288 @@
+WITH cost AS (
+    SELECT
+        BRAND,
+        SKU,
+        FULLYLOADEDCOST
+    FROM GDGIHQE_BH_PROD_IA_PROD_SHARE.ANALYTICS.FLC
+    WHERE FISCALYEAR = 2024
+)
+, trn_flags AS (
+    SELECT 
+        a.BRAND,
+        a.SKU,
+        a.channel,
+        a.sub_channel,
+        SUM(
+            CASE WHEN return_prime = TRUE THEN UNITSOLD ELSE 0 END
+        ) AS rtp_units,
+        SUM(
+            CASE WHEN return_prime = TRUE THEN COALESCE(c.FULLYLOADEDCOST,0) * UNITSOLD ELSE 0 END
+        ) AS rtp_revenue,
+        SUM(
+            CASE WHEN warranty_flag = TRUE THEN UNITSOLD ELSE 0 END
+        ) AS warranty_units,
+        SUM(
+            CASE WHEN warranty_flag = TRUE THEN COALESCE(c.FULLYLOADEDCOST,0) * UNITSOLD ELSE 0 END
+        ) AS warranty_revenue,
+        SUM(
+            CASE WHEN PR_flag = TRUE THEN UNITSOLD ELSE 0 END
+        ) AS pr_units,
+        SUM(
+            CASE WHEN PR_flag = TRUE THEN COALESCE(c.FULLYLOADEDCOST,0) * UNITSOLD ELSE 0 END
+        ) AS pr_revenue
+    FROM (
+        SELECT
+            o.*,
+            case 
+                when o.platform = 'Hybris' then 'Ecom'
+                else 'Indirect'
+            end as channel,
+            o.platform AS sub_channel,
+            CASE
+                WHEN PLATFORM LIKE 'Amazon%' AND o.orderid LIKE 'R%' THEN TRUE
+                ELSE FALSE
+            END AS return_prime,
+            CASE
+                WHEN COALESCE(a.totalpaymentreceived,0) = 0 AND o.orderid LIKE 'W%' THEN TRUE
+                ELSE FALSE
+            END AS warranty_flag,
+            CASE
+                WHEN COALESCE(a.totalpaymentreceived,0) = 0 
+                     AND o.orderid NOT LIKE 'W%'  
+                     AND o.orderid NOT LIKE 'R%'  
+                THEN TRUE
+                ELSE FALSE
+            END AS PR_flag
+        FROM GDGIHQE_BH_PROD_IA_PROD_SHARE.ANALYTICS.GENERATED_CORE_ORDERALLLEVELINFORMATION_PLUS_RETURNS_MAX_SECURE o
+        JOIN GDGIHQE_BH_PROD_IA_PROD_SHARE.ANALYTICS.VW_SKU_LATEST_UPC_DIMS p
+            ON o.BRAND = p.COUNTRY
+           AND o.SKU = p.SKU
+        LEFT JOIN (
+            SELECT 
+                orderid,
+                totalpaymentreceived
+            FROM GDGIHQE_BH_PROD_IA_PROD_SHARE.ANALYTICS.GENERATED_CORE_ORDERALLLEVELINFORMATION_PLUS_RETURNS_MAX_SECURE
+            WHERE orderlevel = 'Header'
+        ) AS a
+        ON o.orderid = a.orderid  
+        WHERE 
+            o.ORDERDATE BETWEEN    '2024-02-04' and '2025-02-01'
+            AND o.ORDERLEVEL = 'Line'
+    ) AS a
+    LEFT JOIN cost c
+        ON c.brand = a.brand
+       AND c.sku = a.sku
+    GROUP BY 1,2,3,4
+),
+
+pri AS (
+    SELECT * FROM (
+        WITH Base_CT AS (
+            SELECT
+                CAST(productcode AS STRING) AS product_code,
+                CAST(new_tag AS STRING) AS new_tag,
+                CAST(productprice AS FLOAT) AS product_price,
+                CAST(saleprice AS FLOAT) AS sale_price,
+                CAST(price_start_date AS DATE) AS price_start_date,
+                CAST(price_end_date AS DATE) AS price_end_date,
+                CAST(customer_group AS FLOAT) AS customer_group,
+                CAST(currency AS STRING) AS currency,
+                CAST(brand AS STRING) AS brand,
+                CAST(ingestion_date AS TIMESTAMP) AS ingestion_date
+            FROM GDGIHQE_BH_PROD_IA_PROD_SHARE.ANALYTICS.VW_PRODUCT_PRICING_CURRENCY
+        ),
+        price_windows AS (
+            SELECT
+                product_code,
+                brand,
+                currency,
+                product_price,
+                COALESCE(sale_price, product_price) AS saleprice,
+                price_start_date,
+                price_end_date AS effective_end_date,
+                ingestion_date
+            FROM Base_CT
+        ),
+        date_sequence AS (
+            SELECT DATEADD(DAY, SEQ4(), TO_DATE('2022-01-01')) AS date
+            FROM TABLE(GENERATOR(ROWCOUNT => 3000))
+            WHERE DATEADD(DAY, SEQ4(), TO_DATE('2022-01-01')) 
+                  <= DATEADD(DAY, 730, CURRENT_DATE())
+        ),
+        product_date_prices AS (
+            SELECT
+                d.date,
+                p.product_code,
+                p.currency,
+                p.brand,
+                p.product_price AS regular_price,
+                p.saleprice,
+                p.price_start_date,
+                p.ingestion_date,
+                ROW_NUMBER() OVER (
+                    PARTITION BY p.product_code, p.brand, d.date,p.currency
+                    ORDER BY p.price_start_date DESC, p.ingestion_date DESC
+                ) AS row_num
+            FROM price_windows p
+            JOIN date_sequence d
+                ON d.date BETWEEN p.price_start_date AND p.effective_end_date
+        )
+        SELECT DISTINCT
+            product_code AS sku,
+            date,
+            currency,
+            brand,
+            regular_price AS baseprice
+        FROM product_date_prices
+        WHERE row_num = 1
+    )
+),
+
+txn AS (
+    SELECT
+        o.BRAND,
+        o.SKU,
+        case 
+            when o.platform = 'Hybris' then 'Ecom'
+            else 'Indirect'
+        end as channel,
+        o.platform AS sub_channel,
+        o.PRODUCTPRICE * o.forexrate AS PRODUCTPRICE,
+        o.UNITSOLD,
+        o.orderdate,
+        d.discount_amount*o.forexrate as discount_amount,
+        o.currency,
+        COALESCE(pd.baseprice, o.PRODUCTPRICE) * o.forexrate AS base_price
+    FROM GDGIHQE_BH_PROD_IA_PROD_SHARE.ANALYTICS.GENERATED_CORE_ORDERALLLEVELINFORMATION_PLUS_RETURNS_MAX_SECURE o
+    JOIN GDGIHQE_BH_PROD_IA_PROD_SHARE.ANALYTICS.VW_SKU_LATEST_UPC_DIMS p
+        ON o.BRAND = p.COUNTRY
+       AND o.SKU = p.SKU
+    JOIN GDGIHQE_BH_PROD_IA_PROD_SHARE.ANALYTICS.GENERATED_CORE_VERIFIED_DISCOUNT_SECURE d
+        ON d.transaction_id = o.orderid
+       AND d.sku_id = o.sku
+    LEFT JOIN pri pd
+        ON pd.sku = o.sku 
+       AND o.brand = pd.brand
+       AND CAST(o.orderdate AS DATE) = CAST(pd.date AS DATE)
+    WHERE 
+        o.ORDERDATE BETWEEN   '2024-02-04' and '2025-02-01'
+        AND o.ORDERLEVEL = 'Line'
+        AND o.ORDERID NOT LIKE 'R%'   
+        AND o.ORDERID NOT LIKE 'W%' 
+        AND o.PRODUCTPRICE <> 0
+        AND o.platform <> 'Volusion'
+        AND p.department <> 'Non-BH'
+        AND o.ORDERID NOT IN (
+            SELECT ORDERID 
+            FROM GDGIHQE_BH_PROD_IA_PROD_SHARE.ANALYTICS.GENERATED_CORE_ORDERALLLEVELINFORMATION_PLUS_RETURNS_MAX_SECURE
+            WHERE ORDERLEVEL = 'Header'
+              AND totalpaymentreceived = 0
+        )
+),
+
+tax_rates AS (
+    SELECT 1 AS "Row", 'Canada' AS country, 'BHCA' AS l0_name, 'TaxRate' AS type, 0.0 AS vat_rate_per
+    UNION ALL SELECT 2, 'USA', 'BHUS', 'TaxRate', 0.0
+    UNION ALL SELECT 3, 'Australia [AU]', 'BHAU', 'TaxRate', 0.1
+    UNION ALL SELECT 4, 'Germany [DE]', 'BHDE', 'TaxRate', 0.19
+    UNION ALL SELECT 5, 'France [FR]', 'BHFR', 'TaxRate', 0.2
+    UNION ALL SELECT 6, 'United Kingdom [GB]', 'BHUK', 'TaxRate', 0.2
+),
+
+-- po_data as (
+-- select brand,sku,sum(QUANTITY_RECEIVED) as receipt_units from
+-- (
+-- SELECT distinct
+--   po.sku AS sku, 
+--   case when po.brand IN ('BHUS', 'BHUK', 'BHAU', 'BHDE', 'BHFR', 'BHCA','BHEU') then po.brand else 'BHUS' end as brand,
+--   PO.PO_NUMBER,
+--   CAST(po_date AS DATE) AS po_date,
+--   cast(date_shipped as date) as date_shipped,
+--   wr.date AS warehouse_date,
+--   ordered_quantity,
+--   pl.quantity_shipped,
+--   wr.QUANTITY_RECEIVED 
+
+-- FROM GDGIHQE_BH_PROD_IA_PROD_SHARE.IMPACT_ANALYTICS.vw_purchase_order_most_recent_upload AS po
+--  JOIN GDGIHQE_BH_PROD_IA_PROD_SHARE.IMPACT_ANALYTICS.vw_packing_list AS pl
+--   ON po.po_number = pl.po_number AND po.sku = pl.sku
+--  JOIN (
+--   SELECT *, cast(date_received as date) AS date
+--   FROM GDGIHQE_BH_PROD_IA_PROD_SHARE.IMPACT_ANALYTICS.vw_warehouse_receipt
+-- ) AS wr
+--   ON  pl.po_number = wr.po_number AND pl.sku = wr.sku
+--   AND pl.container_number = wr.container_number
+--     AND pl.inventorypackinglistsummaryid = wr.inventorypackinglistsummaryid
+--     where cast(wr.date_received as date) between    '2024-02-04' and '2025-02-01'
+--     )
+--     group by brand,sku
+--     ),
+
+actives AS (
+    SELECT 
+        country AS brand, 
+        sku, 
+        channel_status
+    FROM GDGIHQE_BH_PROD_IA_PROD_SHARE.ANALYTICS.VW_SKU_LATEST_UPC_DIMS
+    WHERE 
+        channel_status IN ('ALLOCATED','TO BE REMOVED (EOL)','TO BE ALLOCATED','OTHER CHANNEL')  
+        AND (entity_type NOT IN ('Small Parts') OR entity_type IS NULL)
+        AND department IS NOT NULL
+),
+
+
+finall_pre AS (
+    SELECT
+        t.brand,
+        t.sku,
+        t.channel,
+        t.sub_channel,
+        '2024' AS FISCAL_YEAR,
+        SUM(t.UNITSOLD) AS units,
+        (SUM(t.UNITSOLD * COALESCE(t.PRODUCTPRICE, 0) * (1 - tr.vat_rate_per))
+         - SUM(COALESCE(t.discount_amount, 0) * (1 - tr.vat_rate_per))) AS revenue,
+        SUM(t.UNITSOLD * t.PRODUCTPRICE - t.UNITSOLD * c.FULLYLOADEDCOST) AS gm_dollar,
+        (SUM(t.UNITSOLD * t.PRODUCTPRICE) - SUM(t.UNITSOLD * c.FULLYLOADEDCOST))
+            / NULLIF(SUM(t.UNITSOLD * t.PRODUCTPRICE),0) AS gm_pct,
+        CASE 
+            WHEN SUM(t.UNITSOLD * t.base_price) = 0 THEN NULL
+            ELSE ((SUM(t.UNITSOLD * t.base_price)
+                   - (SUM(t.UNITSOLD * COALESCE(t.PRODUCTPRICE, 0)) - SUM(COALESCE(t.discount_amount, 0))))
+                  / SUM(t.UNITSOLD * t.base_price)) * 100
+        END AS dr_percent
+    FROM txn t
+    LEFT JOIN cost c
+        ON t.BRAND = c.BRAND AND t.SKU = c.SKU
+    LEFT JOIN tax_rates tr
+        ON t.brand = tr.l0_name
+    GROUP BY 1,2,3,4
+),
+
+finall_with_flags AS (
+    SELECT
+        f.*,
+        COALESCE(tf.rtp_units, 0) AS rtp_units,
+        COALESCE(tf.rtp_revenue, 0) AS rtp_revenue,
+        COALESCE(tf.pr_units, 0) AS pr_units,
+        COALESCE(tf.pr_revenue, 0) AS pr_revenue,
+        COALESCE(tf.warranty_units, 0) AS warranty_units,
+        COALESCE(tf.warranty_revenue, 0) AS warranty_revenue
+    FROM finall_pre f
+    LEFT JOIN trn_flags tf
+        ON f.brand = tf.brand 
+       AND f.sku = tf.sku
+       AND f.sub_channel = tf.sub_channel
+       AND f.channel = tf.channel
+),
+
+finall AS (
+    SELECT 
+        f.*,
+        CASE WHEN a.sku IS NOT NULL THEN TRUE ELSE FALSE END AS active
+    FROM finall_with_flags f
+    LEFT JOIN actives a
+        ON f.brand = a.brand AND f.sku = a.sku
+)
+
+SELECT *
+FROM finall 
