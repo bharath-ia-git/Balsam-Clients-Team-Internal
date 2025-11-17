@@ -18,54 +18,35 @@ pm AS (
        AND paf.l0_name = phff.brand
     WHERE paf.active = TRUE
 ),
-combined AS (
+final AS (
     SELECT
         lly.hierarchy_code,
         p.brand,
         p.sku,
+        '2025' as fiscal_year,
         lly.channel,
-
-        SUM(COALESCE(lly.written_sales_units, 0)) AS sales_units,
-        SUM(COALESCE(lly.written_sales_dollars, 0)) AS revenue,
-        SUM(COALESCE(lly.written_gm_dollar, 0)) AS gross_margin,
-        CASE 
-            WHEN SUM(COALESCE(lly.written_sales_dollars,0)) = 0 THEN NULL
-            ELSE SUM(COALESCE(lly.written_gm_dollar,0)) 
-                 / SUM(COALESCE(lly.written_sales_dollars,0))
-        END AS gm_pct,
-
-        SUM(COALESCE(lly.warranty_units, 0)) AS warranty_units,
+      SUM(COALESCE(lly.warranty_units, 0)) AS warranty_units,
         SUM(COALESCE(lly.warranty_dollar, 0)) AS warranty_dollar,
-
         SUM(COALESCE(lly.zero_dollar_orders_units, 0)) AS zero_dollar_orders_units,
         SUM(COALESCE(lly.zero_dollar_orders_dollar, 0)) AS zero_dollar_orders_dollar,
-
         SUM(COALESCE(lly.rtp_units, 0)) AS rtp_units,
         SUM(COALESCE(lly.rtp_dollar, 0)) AS rtp_dollar,
-
-        SUM(COALESCE(lly.discount, 0)) AS discount_dollar,
-        CASE 
-            WHEN SUM(COALESCE(lly.written_sales_dollars,0)) = 0 THEN NULL
-            ELSE SUM(COALESCE(lly.discount,0)) 
-                 / SUM(COALESCE(lly.written_sales_dollars,0))
-        END AS discount_pct,
-
-        SUM(COALESCE(lly.total_receipt_units, 0)) AS total_receipt_units,
+             SUM(COALESCE(lly.total_receipt_units, 0)) AS total_receipt_units,
         SUM(COALESCE(lly.total_receipt_cost, 0)) AS total_receipt_cost
     FROM item_smart.lly_master lly
     JOIN pm p
         ON p.hierarchy_code = lly.hierarchy_code
-    WHERE lly.compared_week BETWEEN 202401 AND 202453
-        and lly.sub_channel IN (
+    WHERE lly.sub_channel  IN (
             'Ecom_warehouse',
             'Indirect_warehouse',
             'Store_warehouse'
         )
+      AND lly.compared_week BETWEEN 202401 AND 202553
     GROUP BY
         lly.hierarchy_code,
         p.brand,
         p.sku,
         lly.channel
+ 
 )
-
-SELECT * FROM combined;
+SELECT * FROM final;
