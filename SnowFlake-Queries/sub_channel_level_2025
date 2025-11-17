@@ -240,7 +240,7 @@ finall_pre AS (
           when t.sub_channel  in ('Macy') then 'Macys'
           when t.sub_channel  in ('Targetdvs','Target') then 'Target'
         else t.sub_channel ,
-        # t.sub_channel,
+        -- t.sub_channel,
         '2025' AS FISCAL_YEAR,
         SUM(t.UNITSOLD) AS units,
         (SUM(t.UNITSOLD * COALESCE(t.PRODUCTPRICE, 0) * (1 - tr.vat_rate_per))
