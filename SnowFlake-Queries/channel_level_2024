@@ -277,6 +277,7 @@ finall_with_flags AS (
         ON f.brand = tf.brand AND f.sku = tf.sku AND f.channel = tf.channel
     LEFT JOIN po_data po
         ON f.brand = po.brand AND f.sku = po.sku AND f.channel = po.channel
+    group by all
 ),
 
 finall AS (
