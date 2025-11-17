@@ -50,12 +50,17 @@ combined AS (
                  / SUM(COALESCE(lly.written_sales_dollars,0))
         END AS discount_pct,
 
-        SUM(COALESCE(lly.on_order_placed_total_unit, 0)) AS on_order_placed_total_unit,
-        SUM(COALESCE(lly.on_order_placed_total_cost, 0)) AS on_order_placed_total_cost
+        SUM(COALESCE(lly.total_receipt_units, 0)) AS total_receipt_units,
+        SUM(COALESCE(lly.total_receipt_cost, 0)) AS total_receipt_cost
     FROM item_smart.lly_master lly
     JOIN pm p
         ON p.hierarchy_code = lly.hierarchy_code
     WHERE lly.compared_week BETWEEN 202401 AND 202453
+        and lly.sub_channel IN (
+            'Ecom_warehouse',
+            'Indirect_warehouse',
+            'Store_warehouse'
+        )
     GROUP BY
         lly.hierarchy_code,
         p.brand,
