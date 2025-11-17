@@ -1,3 +1,70 @@
+-- WITH phff AS (
+--     SELECT DISTINCT
+--         CAST(hierarchy_code AS INT) AS hierarchy_code,
+--         path->>'sku' AS sku,
+--         path->>'l0_name' AS brand
+--     FROM global.product_hierarchies_filter
+--     WHERE level = 7
+--       AND active = TRUE
+-- ),
+-- pm AS (
+--     SELECT DISTINCT 
+--         paf.l0_name AS brand,
+--         paf.sku,
+--         phff.hierarchy_code
+--     FROM phff
+--     JOIN global.product_attributes_filter paf
+--         ON paf.sku = phff.sku
+--        AND paf.l0_name = phff.brand
+--     WHERE paf.active = TRUE
+-- ),
+-- final AS (
+--     SELECT
+--         lly.hierarchy_code,
+--         p.brand,
+--         p.sku,
+--         '2024' as fiscal_year,
+--         lly.channel,
+--         lly.sub_channel,
+--         SUM(COALESCE(lly.written_sales_units, 0)) AS sales_units,
+--         SUM(COALESCE(lly.written_sales_dollars, 0)) AS revenue,
+--         SUM(COALESCE(lly.written_gm_dollar, 0)) AS gross_margin,
+--         CASE 
+--             WHEN SUM(COALESCE(lly.written_sales_dollars,0)) = 0 THEN NULL
+--             ELSE SUM(COALESCE(lly.written_gm_dollar,0)) 
+--                  / SUM(COALESCE(lly.written_sales_dollars,0))
+--         END AS gm_pct,
+--         SUM(COALESCE(lly.warranty_units, 0)) AS warranty_units,
+--         SUM(COALESCE(lly.warranty_dollar, 0)) AS warranty_dollar,
+--         SUM(COALESCE(lly.zero_dollar_orders_units, 0)) AS zero_dollar_orders_units,
+--         SUM(COALESCE(lly.zero_dollar_orders_dollar, 0)) AS zero_dollar_orders_dollar,
+--         SUM(COALESCE(lly.rtp_units, 0)) AS rtp_units,
+--         SUM(COALESCE(lly.rtp_dollar, 0)) AS rtp_dollar,
+--         SUM(COALESCE(lly.discount, 0)) AS discount_dollar,
+--         CASE 
+--             WHEN SUM(COALESCE(lly.written_sales_dollars,0)) = 0 THEN NULL
+--             ELSE SUM(COALESCE(lly.discount,0)) 
+--                  / SUM(COALESCE(lly.written_sales_dollars,0))
+--         END AS discount_pct
+--     FROM item_smart.lly_master lly
+--     JOIN pm p
+--         ON p.hierarchy_code = lly.hierarchy_code
+--     WHERE lly.sub_channel IN (
+--             'Ecom_warehouse',
+--             'Indirect_warehouse',
+--             'Store_warehouse'
+--         )
+--       AND lly.compared_week BETWEEN 202401 AND 202453
+--     GROUP BY
+--         lly.hierarchy_code,
+--         p.brand,
+--         p.sku,
+--         lly.channel,
+--         lly.sub_channel
+-- )
+-- SELECT * FROM final;
+
+
 WITH phff AS (
     SELECT DISTINCT
         CAST(hierarchy_code AS INT) AS hierarchy_code,
@@ -23,7 +90,7 @@ final AS (
         lly.hierarchy_code,
         p.brand,
         p.sku,
-        '2024' as fiscal_year,
+        '2025' as fiscal_year,
         lly.channel,
         lly.sub_channel,
         SUM(COALESCE(lly.written_sales_units, 0)) AS sales_units,
@@ -34,12 +101,7 @@ final AS (
             ELSE SUM(COALESCE(lly.written_gm_dollar,0)) 
                  / SUM(COALESCE(lly.written_sales_dollars,0))
         END AS gm_pct,
-        SUM(COALESCE(lly.warranty_units, 0)) AS warranty_units,
-        SUM(COALESCE(lly.warranty_dollar, 0)) AS warranty_dollar,
-        SUM(COALESCE(lly.zero_dollar_orders_units, 0)) AS zero_dollar_orders_units,
-        SUM(COALESCE(lly.zero_dollar_orders_dollar, 0)) AS zero_dollar_orders_dollar,
-        SUM(COALESCE(lly.rtp_units, 0)) AS rtp_units,
-        SUM(COALESCE(lly.rtp_dollar, 0)) AS rtp_dollar,
+  
         SUM(COALESCE(lly.discount, 0)) AS discount_dollar,
         CASE 
             WHEN SUM(COALESCE(lly.written_sales_dollars,0)) = 0 THEN NULL
@@ -49,12 +111,12 @@ final AS (
     FROM item_smart.lly_master lly
     JOIN pm p
         ON p.hierarchy_code = lly.hierarchy_code
-    WHERE lly.sub_channel IN (
+    WHERE lly.sub_channel not IN (
             'Ecom_warehouse',
             'Indirect_warehouse',
             'Store_warehouse'
         )
-      AND lly.compared_week BETWEEN 202401 AND 202453
+      AND lly.compared_week BETWEEN 202401 AND 202553
     GROUP BY
         lly.hierarchy_code,
         p.brand,
