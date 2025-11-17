@@ -41,7 +41,7 @@ final AS (
             'Indirect_warehouse',
             'Store_warehouse'
         )
-      AND lly.compared_week BETWEEN 202303 AND 202553
+      AND lly.compared_week BETWEEN 202303 AND 202353
     GROUP BY
         lly.hierarchy_code,
         p.brand,
